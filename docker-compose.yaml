@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  bridge:
+    build:
+      context: ./docker/ros_carla_bridge/
+      dockerfile: Dockerfile
+      args:
+        CARLA_VERSION: 0.9.13
+    image: hackathon/carla_ros_bridge:latest
+    container_name: bridge-dev
+    network_mode: host
+    privileged: true
+    environment:
+      - DISPLAY=host.docker.internal:0.0
+    command: roslaunch carla_ros_bridge carla_ros_bridge.launch host:=host.docker.internal port:=2000 timeout:=10
+    restart: always
+
+  client:
+    build:
+      context: ./docker/carla_client_node
+      dockerfile: Dockerfile
+    image: hackathon/carla_client:latest
+    container_name: client-dev
+    network_mode: host
+    environment:
+      - DISPLAY=host.docker.internal:0.0
+      - CARLA_HOST=host.docker.internal
+      - CARLA_PORT=2000
+    volumes:
+      - ./docker/carla_client_node/03_Client:/opt/vehicle-motion-playground/03_Client
+    depends_on:
+      bridge:
+        condition: service_started
+    healthcheck:
+      test: echo 0  # TODO: need better check here, e.g. `rostopic echo` or `rosnode ping`
+      interval: 30s
+      timeout: 30s
+      retries: 2
+      start_period: 15s
+
+  vmp-app:
+    build:
+      context: ./docker/vmp_app_node
+      dockerfile: Dockerfile
+    image: hackathon/vmp_app:latest
+    container_name: vmp-app-dev
+    network_mode: host
+    environment:
+      - DISPLAY=host.docker.internal:0.0
+    volumes:
+      - ./docker/vmp_app_node/04_Template:/opt/vehicle-motion-playground/04_Template
+    depends_on:
+      client:
+        condition: service_healthy
