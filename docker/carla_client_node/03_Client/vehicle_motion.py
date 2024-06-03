@@ -1,6 +1,4 @@
-import glob
 import os
-import sys
 import re
 import weakref
 import collections
@@ -45,7 +43,6 @@ try:
     from pygame.locals import K_p
     from pygame.locals import K_q
     from pygame.locals import K_g
-    from pygame.locals import K_h
     from pygame.locals import K_r
     from pygame.locals import K_t
     from pygame.locals import K_s
@@ -211,6 +208,9 @@ class HUD(object):
         self.time_start = 0
         self.time_end = 0
 
+        self.info_surface = pygame.Surface((220, self.dim[1]))
+        self.info_surface.set_alpha(100)
+
     def on_world_tick(self, timestamp):
         self._server_clock.tick()
         self.server_fps = self._server_clock.get_fps()
@@ -237,15 +237,16 @@ class HUD(object):
         heading += 'E' if 179.5 > t.rotation.yaw > 0.5 else ''
         heading += 'W' if -0.5 > t.rotation.yaw > -179.5 else ''
         colhist = world.collision_sensor.get_collision_history()
-        if ( (3.6 * math.sqrt(v.x**2 + v.y**2 + v.z**2)) > 1 and self.is_start != 2):
+        velocity = math.sqrt(v.x**2 + v.y**2 + v.z**2)
+        if ( (3.6 * velocity) > 1 and self.is_start != 2):
             self.is_start = 1
-            if (( (3.6 * math.sqrt(v.x**2 + v.y**2 + v.z**2)) > 60)):
+            if (( (3.6 * velocity) > 60)):
                 self.is_start = 2
         collision = [colhist[x + self.frame - 200] for x in range(0, 200)]
         max_col = max(1.0, max(collision))
         collision = [x / max_col for x in collision]
-        vehicles = world.world.get_actors().filter('static.*')
-        self.ros.publish_speed(int(round(3.6 * math.sqrt(v.x**2 + v.y**2 + v.z**2), 0)))
+        # vehicles = world.world.get_actors().filter('static.*')
+        self.ros.publish_speed(int(round(3.6 * velocity, 0)))
         self.ros.publish_brake(round(c.brake*110, 2))
         self.ros.publish_steer(int(round(c.steer*540,0)))
         self._info_text = [
@@ -255,7 +256,7 @@ class HUD(object):
             'Map:     % 20s' % world.world.get_map().name.split('/')[-1],
             'Run time: % 18s' % datetime.timedelta(seconds=int(self.simulation_time)),
             '',
-            'Speed:   % 15.0f km/h' % (3.6 * math.sqrt(v.x**2 + v.y**2 + v.z**2)),
+            'Speed:   % 15.0f km/h' % (3.6 * velocity),
             u'Heading:% 16.0f\N{DEGREE SIGN} % 2s' % (t.rotation.yaw, heading),
             'Accelero: (%5.1f,%5.1f,%5.1f)' % (world.imu_sensor.accelerometer),
             'Gyroscop: (%5.1f,%5.1f,%5.1f)' % (world.imu_sensor.gyroscope),
@@ -334,9 +335,7 @@ class HUD(object):
 
     def render(self, display):
         if self._show_info:
-            info_surface = pygame.Surface((220, self.dim[1]))
-            info_surface.set_alpha(100)
-            display.blit(info_surface, (0, 0))
+            display.blit(self.info_surface, (0, 0))
             v_offset = 4
             bar_h_offset = 100
             bar_width = 106
@@ -435,7 +434,7 @@ class HelpText(object):
 class CollisionSensor(object):
     def __init__(self, parent_actor, hud):
         self.sensor = None
-        self.history = []
+        self.history = collections.deque(maxlen=4000)
         self._parent = parent_actor
         self.hud = hud
         world = self._parent.get_world()
@@ -457,9 +456,6 @@ class CollisionSensor(object):
         self = weak_self()
         if not self:
             return
-        actor_type = get_actor_display_name(event.other_actor)
-        
-        
         impulse = event.normal_impulse
         intensity = math.sqrt(impulse.x**2 + impulse.y**2 + impulse.z**2)
         # print(intensity)
@@ -467,10 +463,9 @@ class CollisionSensor(object):
         # self.hud.score = self.hud.score - 1
             self.hud.minus_score(1)
             self.hud.collision+=1
+            actor_type = get_actor_display_name(event.other_actor)
             self.hud.notification('Collision with %r => score - 1' % actor_type)
         self.history.append((event.frame, intensity))
-        if len(self.history) > 4000:
-            self.history.pop(0)
 
 
 # ==============================================================================
@@ -497,8 +492,8 @@ class LaneInvasionSensor(object):
         if not self:
             return
         self.hud.invasion = self.hud.invasion + 1
-        lane_types = set(x.type for x in event.crossed_lane_markings)
-        text = ['%r' % str(x).split()[-1] for x in lane_types]
+        # lane_types = set(x.type for x in event.crossed_lane_markings)
+        # text = ['%r' % str(x).split()[-1] for x in lane_types]
         self.hud.score = self.hud.score - 1
         self.hud.notification('Crossed line => score - 1', seconds = 1)
         
@@ -807,7 +802,7 @@ class DualControl(object):
         end_point = carla.Location(x=42, y=13, z=0.5)  # Adjust the coordinates as needed
 
         # Create a path for the pedestrian
-        path = [start_point, carla.Location(start_point.x, end_point.y, end_point.z), end_point]
+        # path = [start_point, carla.Location(start_point.x, end_point.y, end_point.z), end_point]
 
         # Spawn the pedestrian at the start point of the crosswalk
         self.create_pedestrian(world, start_point, end_point)
@@ -815,7 +810,7 @@ class DualControl(object):
     def create_car_1(self, world):
         # Define the start and end points of the crosswalk
         start_point = carla.Location(x=66.5, y=5.1, z=1)  # Adjust the coordinates as needed
-        end_point = carla.Location(x=42, y=13, z=0.5)  # Adjust the coordinates as needed
+        # end_point = carla.Location(x=42, y=13, z=0.5)  # Adjust the coordinates as needed
 
         # blueprint = random.choice(world.get_blueprint_library().filter('vehicle.dodge.charger_2020'))
 
